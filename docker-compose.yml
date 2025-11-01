@@ -1,0 +1,127 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports: [ "5432:5432" ]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7
+    ports: [ "6379:6379" ]
+
+  # ---- Social Analytics (start with Instagram) ----
+  instagram-server:
+    build:
+      context: .
+      dockerfile: mcp-social-analytics/instagram-server/Dockerfile
+    env_file: .env
+    depends_on: [ postgres ]
+    ports: [ "8101:8000" ]
+
+  tiktok-server:
+    build:
+      context: .
+      dockerfile: mcp-social-analytics/tiktok-server/Dockerfile
+    env_file: .env
+    depends_on: [ postgres ]
+    ports: [ "8102:8000" ]
+    deploy: { replicas: 0 }
+
+  facebook-server:
+    build:
+      context: .
+      dockerfile: mcp-social-analytics/facebook-server/Dockerfile
+    env_file: .env
+    depends_on: [ postgres ]
+    ports: [ "8103:8000" ]
+    deploy: { replicas: 0 }
+
+  twitter-server:
+    build:
+      context: .
+      dockerfile: mcp-social-analytics/twitter-server/Dockerfile
+    env_file: .env
+    depends_on: [ postgres ]
+    ports: [ "8104:8000" ]
+    deploy: { replicas: 0 }
+
+  # ---- Data Processor ----
+  sentiment-analyzer:
+    build:
+      context: .
+      dockerfile: mcp-data-processor/sentiment-analyzer/Dockerfile
+    env_file: .env
+    ports: [ "8201:8000" ]
+
+  trend-detector:
+    build:
+      context: .
+      dockerfile: mcp-data-processor/trend-detector/Dockerfile
+    env_file: .env
+    ports: [ "8202:8000" ]
+
+  insights-engine:
+    build:
+      context: .
+      dockerfile: mcp-data-processor/insights-engine/Dockerfile
+    env_file: .env
+    depends_on: [ postgres, sentiment-analyzer, trend-detector ]
+    ports: [ "8203:8000" ]
+
+  # ---- Content Automation ----
+  content-generator:
+    build:
+      context: .
+      dockerfile: mcp-content-automation/content-generator/Dockerfile
+    env_file: .env
+    depends_on: [ insights-engine ]
+    ports: [ "8301:8000" ]
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: mcp-content-automation/scheduler/Dockerfile
+    env_file: .env
+    depends_on: [ content-generator, publisher, postgres, redis ]
+    ports: [ "8302:8000" ]
+
+  publisher:
+    build:
+      context: .
+      dockerfile: mcp-content-automation/publisher/Dockerfile
+    env_file: .env
+    depends_on: [ postgres ]
+    ports: [ "8303:8000" ]
+
+  # ---- UI ----
+  api-gateway:
+    build:
+      context: .
+      dockerfile: ui/api-gateway/Dockerfile
+    env_file: .env
+    depends_on: [ instagram-server, insights-engine, content-generator, scheduler, publisher ]
+    ports: [ "8080:8000" ]
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: ui/dashboard/Dockerfile
+    env_file: .env
+    depends_on: [ api-gateway ]
+    ports: [ "8501:8501" ]
+
+volumes:
+  pgdata:
